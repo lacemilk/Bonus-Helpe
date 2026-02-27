@@ -170,49 +170,58 @@ export default function App() {
   };
 
   const handleAddEntry = async () => {
-    if (!newEntry.vendor || !newEntry.unit_price || !selectedPeriodId) return;
-    
-    const unitPrice = parseFloat(newEntry.unit_price) || 0;
-
-    if (editingEntryId) {
-      // Editing single entry
-      const personId = Object.keys(newEntry.person_quantities)[0];
-      if (!personId) return;
-      const qty = parseInt(newEntry.person_quantities[personId]) || 0;
-      const person = roster.find(r => r.id === personId);
+    try {
+      if (!newEntry.vendor || !newEntry.unit_price || !selectedPeriodId) return;
       
-      const entryData = {
-        period_id: selectedPeriodId,
-        person_id: personId,
-        person_name: person?.name || '未知',
-        vendor: newEntry.vendor,
-        unit_price: unitPrice,
-        quantity: qty,
-        is_eligible: person ? person.is_eligible_default : 1
-      };
-      await updateDoc(doc(db, 'bonus_entries', editingEntryId), entryData);
-    } else {
-      // Adding multiple entries
-      const batchPromises = Object.entries(newEntry.person_quantities)
-        .filter(([_, qtyStr]) => parseInt(qtyStr as string) > 0)
-        .map(([personId, qtyStr]) => {
-          const person = roster.find(r => r.id === personId);
-          return addDoc(collection(db, 'bonus_entries'), {
-            period_id: selectedPeriodId,
-            person_id: personId,
-            person_name: person?.name || '未知',
-            vendor: newEntry.vendor,
-            unit_price: unitPrice,
-            quantity: parseInt(qtyStr as string),
-            is_eligible: person ? person.is_eligible_default : 1
-          });
-        });
-      await Promise.all(batchPromises);
-    }
+      const unitPrice = parseFloat(newEntry.unit_price) || 0;
 
-    setNewEntry({ vendor: '', unit_price: '', person_quantities: {} });
-    setIsAddingEntry(false);
-    setEditingEntryId(null);
+      if (editingEntryId) {
+        // In edit mode, we find the person ID that was being edited
+        const personId = Object.keys(newEntry.person_quantities)[0];
+        if (!personId) return;
+        
+        const qty = parseInt(newEntry.person_quantities[personId]) || 0;
+        const person = roster.find(r => r.id === personId);
+        
+        const entryData = {
+          period_id: selectedPeriodId,
+          person_id: personId,
+          person_name: person?.name || '未知',
+          vendor: newEntry.vendor,
+          unit_price: unitPrice,
+          quantity: qty,
+          is_eligible: person ? person.is_eligible_default : 1
+        };
+        
+        await updateDoc(doc(db, 'bonus_entries', editingEntryId), entryData);
+      } else {
+        // Adding multiple entries
+        const batchPromises = Object.entries(newEntry.person_quantities)
+          .filter(([_, qtyStr]) => qtyStr !== '' && parseInt(qtyStr as string) > 0)
+          .map(([personId, qtyStr]) => {
+            const person = roster.find(r => r.id === personId);
+            return addDoc(collection(db, 'bonus_entries'), {
+              period_id: selectedPeriodId,
+              person_id: personId,
+              person_name: person?.name || '未知',
+              vendor: newEntry.vendor,
+              unit_price: unitPrice,
+              quantity: parseInt(qtyStr as string),
+              is_eligible: person ? person.is_eligible_default : 1
+            });
+          });
+        
+        if (batchPromises.length === 0) return;
+        await Promise.all(batchPromises);
+      }
+
+      setNewEntry({ vendor: '', unit_price: '', person_quantities: {} });
+      setIsAddingEntry(false);
+      setEditingEntryId(null);
+    } catch (error) {
+      console.error("Error saving entry:", error);
+      alert("儲存失敗，請檢查網路連量或稍後再試。");
+    }
   };
 
   const handleEditEntry = (entry: BonusEntry) => {
@@ -799,28 +808,30 @@ export default function App() {
 
                 <div>
                   <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">
-                    人員銷售數量
+                    {editingEntryId ? '修改數量' : '人員銷售數量'}
                   </label>
                   <div className="space-y-2 max-h-64 overflow-y-auto p-1 bg-jp-bg/50 rounded-2xl border border-jp-border/30">
                     {roster.length === 0 ? (
                       <div className="py-4 text-center text-xs text-jp-muted">請先至名冊管理新增人員</div>
                     ) : (
-                      roster.map(r => (
-                        <div key={r.id} className="flex items-center justify-between p-3 bg-white rounded-xl border border-jp-border/50">
-                          <span className="text-sm font-medium">{r.name}</span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-jp-muted">數量:</span>
-                            <input 
-                              type="number"
-                              min="0"
-                              value={newEntry.person_quantities[r.id] || ''}
-                              onChange={(e) => handleQuantityChange(r.id, e.target.value)}
-                              className="w-20 p-2 bg-jp-bg rounded-lg text-right text-sm outline-none focus:ring-1 ring-jp-accent/50"
-                              placeholder="0"
-                            />
+                      roster
+                        .filter(r => !editingEntryId || newEntry.person_quantities[r.id] !== undefined)
+                        .map(r => (
+                          <div key={r.id} className="flex items-center justify-between p-3 bg-white rounded-xl border border-jp-border/50">
+                            <span className="text-sm font-medium">{r.name}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-jp-muted">數量:</span>
+                              <input 
+                                type="number"
+                                min="0"
+                                value={newEntry.person_quantities[r.id] || ''}
+                                onChange={(e) => handleQuantityChange(r.id, e.target.value)}
+                                className="w-20 p-2 bg-jp-bg rounded-lg text-right text-sm outline-none focus:ring-1 ring-jp-accent/50"
+                                placeholder="0"
+                              />
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        ))
                     )}
                   </div>
                 </div>
