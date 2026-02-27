@@ -1,3 +1,4 @@
+// Version: 1.0.2 - Force sync and visible update badge
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, 
@@ -13,7 +14,8 @@ import {
   UserPlus,
   DollarSign,
   Info,
-  Settings
+  Settings,
+  Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RosterItem, Period, BonusEntry, View } from './types';
@@ -47,11 +49,11 @@ export default function App() {
   const [newRosterEligible, setNewRosterEligible] = useState(true);
   const [newPeriodName, setNewPeriodName] = useState('');
   const [newEntry, setNewEntry] = useState({
-    person_id: '',
     vendor: '',
     unit_price: '',
     quantity: '1',
-    is_eligible: true
+    is_eligible: true,
+    selected_people: [] as string[]
   });
   const [actualBonusInput, setActualBonusInput] = useState('');
 
@@ -59,6 +61,7 @@ export default function App() {
   const [isAddingRoster, setIsAddingRoster] = useState(false);
   const [isAddingPeriod, setIsAddingPeriod] = useState(false);
   const [isAddingEntry, setIsAddingEntry] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [expandedVendor, setExpandedVendor] = useState<string | null>(null);
   const [isConfigMissing, setIsConfigMissing] = useState(false);
 
@@ -169,17 +172,51 @@ export default function App() {
   };
 
   const handleAddEntry = async () => {
-    if (!newEntry.person_id || !newEntry.vendor || !newEntry.unit_price || !newEntry.quantity) return;
-    await addDoc(collection(db, 'bonus_entries'), {
-      period_id: selectedPeriodId,
-      person_id: newEntry.person_id,
-      vendor: newEntry.vendor,
-      unit_price: parseFloat(newEntry.unit_price),
-      quantity: parseInt(newEntry.quantity),
-      is_eligible: newEntry.is_eligible ? 1 : 0
-    });
-    setNewEntry({ ...newEntry, vendor: '', unit_price: '', quantity: '1' });
+    if (!newEntry.vendor || !newEntry.unit_price || !newEntry.quantity) return;
+    
+    if (editingEntryId) {
+      // Editing single entry
+      if (newEntry.selected_people.length === 0) return;
+      const entryData = {
+        period_id: selectedPeriodId,
+        person_id: newEntry.selected_people[0],
+        vendor: newEntry.vendor,
+        unit_price: parseFloat(newEntry.unit_price),
+        quantity: parseInt(newEntry.quantity),
+        is_eligible: newEntry.is_eligible ? 1 : 0
+      };
+      await updateDoc(doc(db, 'bonus_entries', editingEntryId), entryData);
+    } else {
+      // Adding multiple entries
+      if (newEntry.selected_people.length === 0) return;
+      const batchPromises = newEntry.selected_people.map(personId => {
+        return addDoc(collection(db, 'bonus_entries'), {
+          period_id: selectedPeriodId,
+          person_id: personId,
+          vendor: newEntry.vendor,
+          unit_price: parseFloat(newEntry.unit_price),
+          quantity: parseInt(newEntry.quantity),
+          is_eligible: newEntry.is_eligible ? 1 : 0
+        });
+      });
+      await Promise.all(batchPromises);
+    }
+
+    setNewEntry({ vendor: '', unit_price: '', quantity: '1', is_eligible: true, selected_people: [] });
     setIsAddingEntry(false);
+    setEditingEntryId(null);
+  };
+
+  const handleEditEntry = (entry: BonusEntry) => {
+    setNewEntry({
+      vendor: entry.vendor,
+      unit_price: entry.unit_price.toString(),
+      quantity: entry.quantity.toString(),
+      is_eligible: entry.is_eligible === 1,
+      selected_people: [entry.person_id]
+    });
+    setEditingEntryId(entry.id);
+    setIsAddingEntry(true);
   };
 
   const handleDeleteEntry = async (id: string) => {
@@ -257,17 +294,39 @@ export default function App() {
   }, [entries, activePeriod]);
 
   const handlePersonSelect = (personId: string) => {
-    const person = roster.find(r => r.id.toString() === personId);
-    if (person) {
-      setNewEntry({
-        ...newEntry,
-        person_id: personId,
-        is_eligible: person.is_eligible_default === 1
-      });
+    const isSelected = newEntry.selected_people.includes(personId);
+    let updatedPeople: string[];
+    
+    if (editingEntryId) {
+      // In edit mode, only one person can be selected
+      updatedPeople = [personId];
     } else {
-      setNewEntry({ ...newEntry, person_id: personId });
+      if (isSelected) {
+        updatedPeople = newEntry.selected_people.filter(id => id !== personId);
+      } else {
+        updatedPeople = [...newEntry.selected_people, personId];
+      }
     }
+
+    // Update eligibility based on the last selected person if it's a new batch
+    const lastPerson = roster.find(r => r.id.toString() === personId);
+    setNewEntry({
+      ...newEntry,
+      selected_people: updatedPeople,
+      is_eligible: lastPerson ? lastPerson.is_eligible_default === 1 : newEntry.is_eligible
+    });
   };
+
+  const uniqueVendors = useMemo(() => {
+    const vendors = new Set<string>();
+    periods.forEach(p => {
+      // This would ideally come from a global entries list, 
+      // but we can at least use current entries or a separate collection
+    });
+    // For now, get from current entries across all periods if available
+    entries.forEach(e => vendors.add(e.vendor));
+    return Array.from(vendors);
+  }, [entries]);
 
   if (isConfigMissing) {
     return (
@@ -293,9 +352,15 @@ export default function App() {
             <ArrowLeft size={24} />
           </button>
         ) : (
-          <h1 className="text-2xl font-display font-bold text-jp-ink">
-            {view === 'periods' ? '獎金檔期' : '名冊管理'}
-          </h1>
+          <div className="flex flex-col">
+            <h1 className="text-2xl font-display font-bold text-jp-ink">
+              {view === 'periods' ? '獎金檔期' : '名冊管理'}
+            </h1>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-jp-muted opacity-50">v1.0.2</span>
+              <span className="px-1.5 py-0.5 bg-emerald-500 text-white text-[8px] font-bold rounded-full animate-pulse">NEW</span>
+            </div>
+          </div>
         )}
         
         {view === 'periods' && (
@@ -547,11 +612,25 @@ export default function App() {
                                         ${e.unit_price.toLocaleString()} × {e.quantity}
                                       </p>
                                     </div>
-                                    <div className="flex items-center gap-3">
-                                      <p className="text-sm font-display font-bold">${(e.unit_price * e.quantity).toLocaleString()}</p>
+                                    <div className="flex items-center gap-1">
+                                      <p className="text-sm font-display font-bold mr-2">${(e.unit_price * e.quantity).toLocaleString()}</p>
                                       <button 
-                                        onClick={() => handleDeleteEntry(e.id)}
-                                        className="p-1 text-jp-secondary opacity-0 group-hover:opacity-100 transition-opacity"
+                                        onClick={(e_stop) => {
+                                          e_stop.stopPropagation();
+                                          handleEditEntry(e);
+                                        }}
+                                        className="p-2 text-jp-accent bg-jp-accent/5 hover:bg-jp-accent/10 rounded-full transition-colors"
+                                        title="修改"
+                                      >
+                                        <Pencil size={14} />
+                                      </button>
+                                      <button 
+                                        onClick={(e_stop) => {
+                                          e_stop.stopPropagation();
+                                          handleDeleteEntry(e.id);
+                                        }}
+                                        className="p-2 text-jp-secondary bg-jp-secondary/5 hover:bg-jp-secondary/10 rounded-full transition-colors"
+                                        title="刪除"
                                       >
                                         <Trash2 size={14} />
                                       </button>
@@ -690,7 +769,11 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setIsAddingEntry(false)}
+              onClick={() => {
+                setIsAddingEntry(false);
+                setEditingEntryId(null);
+                setNewEntry({ vendor: '', unit_price: '', quantity: '1', is_eligible: true, selected_people: [] });
+              }}
               className="absolute inset-0 bg-black/20 backdrop-blur-sm"
             />
             <motion.div 
@@ -699,30 +782,47 @@ export default function App() {
               exit={{ y: '100%' }}
               className="relative w-full max-w-sm bg-white rounded-t-3xl sm:rounded-3xl p-8 shadow-xl max-h-[90vh] overflow-y-auto"
             >
-              <h3 className="text-xl font-display font-bold mb-6">登記獎金</h3>
+              <h3 className="text-xl font-display font-bold mb-6">{editingEntryId ? '修改登記' : '登記獎金'}</h3>
               <div className="space-y-4">
                 <div>
                   <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">廠商名稱</label>
                   <input 
                     type="text" 
+                    list="vendor-suggestions"
                     value={newEntry.vendor}
                     onChange={(e) => setNewEntry({ ...newEntry, vendor: e.target.value })}
                     className="w-full p-4 bg-jp-bg rounded-2xl outline-none focus:ring-2 ring-jp-accent/20"
-                    placeholder="輸入廠商..."
+                    placeholder="輸入或選擇廠商..."
                   />
+                  <datalist id="vendor-suggestions">
+                    {uniqueVendors.map(v => <option key={v} value={v} />)}
+                  </datalist>
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">選擇人員</label>
-                  <select 
-                    value={newEntry.person_id}
-                    onChange={(e) => handlePersonSelect(e.target.value)}
-                    className="w-full p-4 bg-jp-bg rounded-2xl outline-none focus:ring-2 ring-jp-accent/20 appearance-none"
-                  >
-                    <option value="">請選擇人員...</option>
-                    {roster.map(r => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
-                  </select>
+                  <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">
+                    {editingEntryId ? '修改人員' : '選擇人員 (可多選)'}
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 bg-jp-bg/50 rounded-2xl border border-jp-border/30">
+                    {roster.length === 0 ? (
+                      <div className="col-span-2 py-4 text-center text-xs text-jp-muted">請先至名冊管理新增人員</div>
+                    ) : (
+                      roster.map(r => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => handlePersonSelect(r.id)}
+                          className={`p-3 rounded-xl text-sm font-medium transition-all border flex items-center justify-center gap-2 ${
+                            newEntry.selected_people.includes(r.id)
+                              ? 'bg-jp-accent text-white border-jp-accent shadow-md scale-[1.02]'
+                              : 'bg-white text-jp-ink border-jp-border/50 hover:border-jp-accent/30'
+                          }`}
+                        >
+                          {newEntry.selected_people.includes(r.id) && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                          {r.name}
+                        </button>
+                      ))
+                    )}
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -759,7 +859,7 @@ export default function App() {
                   onClick={handleAddEntry}
                   className="w-full py-4 bg-jp-accent text-white rounded-2xl font-bold shadow-lg shadow-jp-accent/20 active:scale-[0.98] transition-transform"
                 >
-                  確認登記
+                  {editingEntryId ? '儲存修改' : '確認登記'}
                 </button>
               </div>
             </motion.div>
