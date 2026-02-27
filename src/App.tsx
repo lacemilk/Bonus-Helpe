@@ -170,7 +170,7 @@ export default function App() {
   };
 
   const handleAddEntry = async () => {
-    if (!newEntry.vendor || !newEntry.unit_price) return;
+    if (!newEntry.vendor || !newEntry.unit_price || !selectedPeriodId) return;
     
     const unitPrice = parseFloat(newEntry.unit_price) || 0;
 
@@ -184,6 +184,7 @@ export default function App() {
       const entryData = {
         period_id: selectedPeriodId,
         person_id: personId,
+        person_name: person?.name || '未知',
         vendor: newEntry.vendor,
         unit_price: unitPrice,
         quantity: qty,
@@ -199,6 +200,7 @@ export default function App() {
           return addDoc(collection(db, 'bonus_entries'), {
             period_id: selectedPeriodId,
             person_id: personId,
+            person_name: person?.name || '未知',
             vendor: newEntry.vendor,
             unit_price: unitPrice,
             quantity: parseInt(qtyStr as string),
