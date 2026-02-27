@@ -51,9 +51,7 @@ export default function App() {
   const [newEntry, setNewEntry] = useState({
     vendor: '',
     unit_price: '',
-    quantity: '1',
-    is_eligible: true,
-    selected_people: [] as string[]
+    person_quantities: {} as Record<string, string>
   });
   const [actualBonusInput, setActualBonusInput] = useState('');
 
@@ -172,37 +170,45 @@ export default function App() {
   };
 
   const handleAddEntry = async () => {
-    if (!newEntry.vendor || !newEntry.unit_price || !newEntry.quantity) return;
+    if (!newEntry.vendor || !newEntry.unit_price) return;
     
+    const unitPrice = parseFloat(newEntry.unit_price) || 0;
+
     if (editingEntryId) {
       // Editing single entry
-      if (newEntry.selected_people.length === 0) return;
+      const personId = Object.keys(newEntry.person_quantities)[0];
+      if (!personId) return;
+      const qty = parseInt(newEntry.person_quantities[personId]) || 0;
+      const person = roster.find(r => r.id === personId);
+      
       const entryData = {
         period_id: selectedPeriodId,
-        person_id: newEntry.selected_people[0],
+        person_id: personId,
         vendor: newEntry.vendor,
-        unit_price: parseFloat(newEntry.unit_price),
-        quantity: parseInt(newEntry.quantity),
-        is_eligible: newEntry.is_eligible ? 1 : 0
+        unit_price: unitPrice,
+        quantity: qty,
+        is_eligible: person ? person.is_eligible_default : 1
       };
       await updateDoc(doc(db, 'bonus_entries', editingEntryId), entryData);
     } else {
       // Adding multiple entries
-      if (newEntry.selected_people.length === 0) return;
-      const batchPromises = newEntry.selected_people.map(personId => {
-        return addDoc(collection(db, 'bonus_entries'), {
-          period_id: selectedPeriodId,
-          person_id: personId,
-          vendor: newEntry.vendor,
-          unit_price: parseFloat(newEntry.unit_price),
-          quantity: parseInt(newEntry.quantity),
-          is_eligible: newEntry.is_eligible ? 1 : 0
+      const batchPromises = Object.entries(newEntry.person_quantities)
+        .filter(([_, qtyStr]) => parseInt(qtyStr as string) > 0)
+        .map(([personId, qtyStr]) => {
+          const person = roster.find(r => r.id === personId);
+          return addDoc(collection(db, 'bonus_entries'), {
+            period_id: selectedPeriodId,
+            person_id: personId,
+            vendor: newEntry.vendor,
+            unit_price: unitPrice,
+            quantity: parseInt(qtyStr as string),
+            is_eligible: person ? person.is_eligible_default : 1
+          });
         });
-      });
       await Promise.all(batchPromises);
     }
 
-    setNewEntry({ vendor: '', unit_price: '', quantity: '1', is_eligible: true, selected_people: [] });
+    setNewEntry({ vendor: '', unit_price: '', person_quantities: {} });
     setIsAddingEntry(false);
     setEditingEntryId(null);
   };
@@ -211,9 +217,7 @@ export default function App() {
     setNewEntry({
       vendor: entry.vendor,
       unit_price: entry.unit_price.toString(),
-      quantity: entry.quantity.toString(),
-      is_eligible: entry.is_eligible === 1,
-      selected_people: [entry.person_id]
+      person_quantities: { [entry.person_id]: entry.quantity.toString() }
     });
     setEditingEntryId(entry.id);
     setIsAddingEntry(true);
@@ -293,28 +297,14 @@ export default function App() {
     return { totalRegistered, actualTotal, surplus, settlement, vendorDetails };
   }, [entries, activePeriod]);
 
-  const handlePersonSelect = (personId: string) => {
-    const isSelected = newEntry.selected_people.includes(personId);
-    let updatedPeople: string[];
-    
-    if (editingEntryId) {
-      // In edit mode, only one person can be selected
-      updatedPeople = [personId];
-    } else {
-      if (isSelected) {
-        updatedPeople = newEntry.selected_people.filter(id => id !== personId);
-      } else {
-        updatedPeople = [...newEntry.selected_people, personId];
+  const handleQuantityChange = (personId: string, qty: string) => {
+    setNewEntry(prev => ({
+      ...prev,
+      person_quantities: {
+        ...prev.person_quantities,
+        [personId]: qty
       }
-    }
-
-    // Update eligibility based on the last selected person if it's a new batch
-    const lastPerson = roster.find(r => r.id.toString() === personId);
-    setNewEntry({
-      ...newEntry,
-      selected_people: updatedPeople,
-      is_eligible: lastPerson ? lastPerson.is_eligible_default === 1 : newEntry.is_eligible
-    });
+    }));
   };
 
   const uniqueVendors = useMemo(() => {
@@ -352,15 +342,9 @@ export default function App() {
             <ArrowLeft size={24} />
           </button>
         ) : (
-          <div className="flex flex-col">
-            <h1 className="text-2xl font-display font-bold text-jp-ink">
-              {view === 'periods' ? '獎金檔期' : '名冊管理'}
-            </h1>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-jp-muted opacity-50">v1.0.2</span>
-              <span className="px-1.5 py-0.5 bg-emerald-500 text-white text-[8px] font-bold rounded-full animate-pulse">NEW</span>
-            </div>
-          </div>
+          <h1 className="text-2xl font-display font-bold text-jp-ink">
+            {view === 'periods' ? '獎金檔期' : '名冊管理'}
+          </h1>
         )}
         
         {view === 'periods' && (
@@ -772,7 +756,7 @@ export default function App() {
               onClick={() => {
                 setIsAddingEntry(false);
                 setEditingEntryId(null);
-                setNewEntry({ vendor: '', unit_price: '', quantity: '1', is_eligible: true, selected_people: [] });
+                setNewEntry({ vendor: '', unit_price: '', person_quantities: {} });
               }}
               className="absolute inset-0 bg-black/20 backdrop-blur-sm"
             />
@@ -784,49 +768,23 @@ export default function App() {
             >
               <h3 className="text-xl font-display font-bold mb-6">{editingEntryId ? '修改登記' : '登記獎金'}</h3>
               <div className="space-y-4">
-                <div>
-                  <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">廠商名稱</label>
-                  <input 
-                    type="text" 
-                    list="vendor-suggestions"
-                    value={newEntry.vendor}
-                    onChange={(e) => setNewEntry({ ...newEntry, vendor: e.target.value })}
-                    className="w-full p-4 bg-jp-bg rounded-2xl outline-none focus:ring-2 ring-jp-accent/20"
-                    placeholder="輸入或選擇廠商..."
-                  />
-                  <datalist id="vendor-suggestions">
-                    {uniqueVendors.map(v => <option key={v} value={v} />)}
-                  </datalist>
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">
-                    {editingEntryId ? '修改人員' : '選擇人員 (可多選)'}
-                  </label>
-                  <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 bg-jp-bg/50 rounded-2xl border border-jp-border/30">
-                    {roster.length === 0 ? (
-                      <div className="col-span-2 py-4 text-center text-xs text-jp-muted">請先至名冊管理新增人員</div>
-                    ) : (
-                      roster.map(r => (
-                        <button
-                          key={r.id}
-                          type="button"
-                          onClick={() => handlePersonSelect(r.id)}
-                          className={`p-3 rounded-xl text-sm font-medium transition-all border flex items-center justify-center gap-2 ${
-                            newEntry.selected_people.includes(r.id)
-                              ? 'bg-jp-accent text-white border-jp-accent shadow-md scale-[1.02]'
-                              : 'bg-white text-jp-ink border-jp-border/50 hover:border-jp-accent/30'
-                          }`}
-                        >
-                          {newEntry.selected_people.includes(r.id) && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                          {r.name}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">單價</label>
+                    <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">廠商名稱</label>
+                    <input 
+                      type="text" 
+                      list="vendor-suggestions"
+                      value={newEntry.vendor}
+                      onChange={(e) => setNewEntry({ ...newEntry, vendor: e.target.value })}
+                      className="w-full p-4 bg-jp-bg rounded-2xl outline-none focus:ring-2 ring-jp-accent/20"
+                      placeholder="輸入或選擇..."
+                    />
+                    <datalist id="vendor-suggestions">
+                      {uniqueVendors.map(v => <option key={v} value={v} />)}
+                    </datalist>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">獎金單價</label>
                     <input 
                       type="number" 
                       value={newEntry.unit_price}
@@ -835,26 +793,36 @@ export default function App() {
                       placeholder="0"
                     />
                   </div>
-                  <div>
-                    <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">數量</label>
-                    <input 
-                      type="number" 
-                      value={newEntry.quantity}
-                      onChange={(e) => setNewEntry({ ...newEntry, quantity: e.target.value })}
-                      className="w-full p-4 bg-jp-bg rounded-2xl outline-none focus:ring-2 ring-jp-accent/20"
-                      placeholder="1"
-                    />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-jp-muted uppercase mb-2 block">
+                    人員銷售數量
+                  </label>
+                  <div className="space-y-2 max-h-64 overflow-y-auto p-1 bg-jp-bg/50 rounded-2xl border border-jp-border/30">
+                    {roster.length === 0 ? (
+                      <div className="py-4 text-center text-xs text-jp-muted">請先至名冊管理新增人員</div>
+                    ) : (
+                      roster.map(r => (
+                        <div key={r.id} className="flex items-center justify-between p-3 bg-white rounded-xl border border-jp-border/50">
+                          <span className="text-sm font-medium">{r.name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-jp-muted">數量:</span>
+                            <input 
+                              type="number"
+                              min="0"
+                              value={newEntry.person_quantities[r.id] || ''}
+                              onChange={(e) => handleQuantityChange(r.id, e.target.value)}
+                              className="w-20 p-2 bg-jp-bg rounded-lg text-right text-sm outline-none focus:ring-1 ring-jp-accent/50"
+                              placeholder="0"
+                            />
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center justify-between p-4 bg-jp-bg rounded-2xl">
-                  <span className="text-sm">參與此檔期平分</span>
-                  <button 
-                    onClick={() => setNewEntry({ ...newEntry, is_eligible: !newEntry.is_eligible })}
-                    className={`w-12 h-6 rounded-full transition-colors relative ${newEntry.is_eligible ? 'bg-jp-accent' : 'bg-jp-border'}`}
-                  >
-                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${newEntry.is_eligible ? 'left-7' : 'left-1'}`} />
-                  </button>
-                </div>
+
                 <button 
                   onClick={handleAddEntry}
                   className="w-full py-4 bg-jp-accent text-white rounded-2xl font-bold shadow-lg shadow-jp-accent/20 active:scale-[0.98] transition-transform"
