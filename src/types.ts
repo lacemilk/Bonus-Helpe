@@ -7,6 +7,8 @@ export interface RosterItem {
 export interface Period {
   id: string;
   name: string;
+  period_code: string;
+  payment_date?: string;
   actual_total_bonus: number;
   created_at: string;
 }
@@ -22,4 +24,20 @@ export interface BonusEntry {
   is_eligible: number;
 }
 
-export type View = 'periods' | 'roster' | 'period_detail';
+export interface GroupBonus {
+  id: string;
+  name: string;
+  period_code: string;
+  payment_date?: string;
+  total_amount: number;
+  created_at: string;
+  details: {
+    person_id: string;
+    person_name: string;
+    sales: number;
+    share: number;
+    amount: number;
+  }[];
+}
+
+export type View = 'periods' | 'roster' | 'period_detail' | 'group_calculator' | 'history' | 'history_period_detail';
