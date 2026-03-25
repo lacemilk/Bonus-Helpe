@@ -1,0 +1,21 @@
+{
+  "name": "獎金小幫手 - Bonus Helper",
+  "short_name": "獎金小幫手",
+  "description": "簡約日系風格的獎金分配工具",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#f15a24",
+  "icons": [
+    {
+      "src": "/bonushelper.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/bonushelper.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
