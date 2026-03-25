@@ -40,4 +40,4 @@ export interface GroupBonus {
   }[];
 }
 
-export type View = 'periods' | 'roster' | 'period_detail' | 'group_calculator' | 'history' | 'history_period_detail';
+export type View = 'periods' | 'roster' | 'period_detail' | 'group_calculator' | 'history' | 'history_period_detail' | 'history_group_detail';

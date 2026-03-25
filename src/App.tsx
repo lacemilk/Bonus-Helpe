@@ -43,6 +43,7 @@ export default function App() {
   const [view, setView] = useState<View>('periods');
   const [sourceView, setSourceView] = useState<View>('periods'); // 新增：追蹤來源頁面，修復返回按鈕邏輯
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(null);
+  const [selectedGroupBonusId, setSelectedGroupBonusId] = useState<string | null>(null);
   const [roster, setRoster] = useState<RosterItem[]>([]);
   const [periods, setPeriods] = useState<Period[]>([]);
   const [groupBonuses, setGroupBonuses] = useState<GroupBonus[]>([]);
@@ -221,6 +222,12 @@ export default function App() {
     setSelectedPeriodId(id);
     setView('period_detail');
     setPeriodTab('settlement');
+  };
+
+  const handleViewGroupBonus = (id: string, fromView: View = view) => {
+    setSourceView(fromView);
+    setSelectedGroupBonusId(id);
+    setView('history_group_detail');
   };
 
   const handleAddEntry = async () => {
@@ -495,7 +502,7 @@ export default function App() {
 
   const [selectedHistoryPeriodCode, setSelectedHistoryPeriodCode] = useState<string | null>(null);
   const [historyEntries, setHistoryEntries] = useState<BonusEntry[]>([]);
-  const [historyDetailTab, setHistoryDetailTab] = useState<'single' | 'group' | 'items'>('single');
+  const [historyDetailTab, setHistoryDetailTab] = useState<'summary' | 'items'>('summary');
   const [isEditingName, setIsEditingName] = useState(false);
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [editingNameType, setEditingNameType] = useState<'single' | 'group'>('single');
@@ -535,20 +542,41 @@ export default function App() {
   const historyPeriodSummary = useMemo(() => {
     if (!selectedHistoryPeriodCode) return [];
     
-    const summary: Record<string, { name: string, single: number, group: number, total: number }> = {};
+    const summary: Record<string, { name: string, single: number, group: number, total: number, isSupport: boolean }> = {};
     
+    // 1. 從名冊初始化 (確保名冊中的人即使沒獎金也能被考慮，但最後會 filter)
     roster.forEach(r => {
-      summary[r.id] = { name: r.name, single: 0, group: 0, total: 0 };
+      summary[r.id] = { name: r.name, single: 0, group: 0, total: 0, isSupport: r.is_eligible_default === 0 };
     });
 
-    // 1. 將單品登記按 period_id 分組，以便計算每個項目的誤差平準
+    // 2. 從單品登記中補充人員 (處理已從名冊刪除的人或支援人員)
+    historyEntries.forEach(e => {
+      if (!summary[e.person_id]) {
+        summary[e.person_id] = { name: e.person_name, single: 0, group: 0, total: 0, isSupport: e.is_eligible === 0 };
+      } else if (e.is_eligible === 0) {
+        // 如果在名冊中是預設可平分，但這筆登記被設為支援，則標記為支援 (或維持原樣，這裡採保守策略)
+        // 實際上通常一個人一個檔期只有一種身份
+      }
+    });
+
+    // 3. 從團體獎金中補充人員
+    const relevantGroupBonuses = groupBonuses.filter(b => b.period_code === selectedHistoryPeriodCode);
+    relevantGroupBonuses.forEach(b => {
+      b.details.forEach(d => {
+        if (!summary[d.person_id]) {
+          summary[d.person_id] = { name: d.person_name, single: 0, group: 0, total: 0, isSupport: false };
+        }
+      });
+    });
+
+    // 4. 將單品登記按 period_id 分組，以便計算每個項目的誤差平準
     const entriesByPeriod: Record<string, BonusEntry[]> = {};
     historyEntries.forEach(e => {
       if (!entriesByPeriod[e.period_id]) entriesByPeriod[e.period_id] = [];
       entriesByPeriod[e.period_id].push(e);
     });
 
-    // 2. 計算每個單品項目的平準獎金並累加
+    // 5. 計算每個單品項目的平準獎金並累加
     Object.entries(entriesByPeriod).forEach(([periodId, periodEntries]) => {
       const periodDoc = periods.find(p => p.id === periodId);
       if (!periodDoc) return;
@@ -575,7 +603,7 @@ export default function App() {
       });
     });
 
-    const relevantGroupBonuses = groupBonuses.filter(b => b.period_code === selectedHistoryPeriodCode);
+    // 6. 累加團體獎金
     relevantGroupBonuses.forEach(b => {
       b.details.forEach(d => {
         if (summary[d.person_id]) {
@@ -738,20 +766,27 @@ export default function App() {
     <div className="max-w-md mx-auto min-h-screen flex flex-col pb-20">
       {/* Header */}
       <header className="p-6 pt-10 flex items-center justify-between">
-        {view === 'period_detail' || view === 'history_period_detail' ? (
-          <button 
-            onClick={() => {
-              // 修復：改進返回按鈕邏輯，確保返回正確的頁面
-              if (view === 'period_detail') {
-                setView(sourceView);
-              } else {
-                setView('history');
-              }
-            }} 
-            className="p-2 -ml-2 text-jp-ink"
-          >
-            <ArrowLeft size={24} />
-          </button>
+        {view === 'period_detail' || view === 'history_period_detail' || view === 'history_group_detail' ? (
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => {
+                // 修復：改進返回按鈕邏輯，確保返回正確的頁面
+                if (view === 'period_detail') {
+                  setView(sourceView);
+                } else if (view === 'history_group_detail') {
+                  setView('history_period_detail');
+                } else {
+                  setView('history');
+                }
+              }} 
+              className="p-2 -ml-2 text-jp-ink"
+            >
+              <ArrowLeft size={24} />
+            </button>
+            <h1 className="text-xl font-bold text-jp-ink">
+              {view === 'history_group_detail' ? '團體獎金明細' : '獎金明細'}
+            </h1>
+          </div>
         ) : (
           <h1 className="text-2xl font-display font-bold text-jp-ink">
             {view === 'periods' ? '單品獎金' : 
@@ -1100,16 +1135,10 @@ export default function App() {
               {/* Tabs for History Detail */}
               <div className="flex p-1 bg-jp-border/30 rounded-xl">
                 <button 
-                  onClick={() => setHistoryDetailTab('single')}
-                  className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${historyDetailTab === 'single' ? 'bg-white shadow-sm text-jp-ink' : 'text-jp-muted'}`}
+                  onClick={() => setHistoryDetailTab('summary')}
+                  className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${historyDetailTab === 'summary' ? 'bg-white shadow-sm text-jp-ink' : 'text-jp-muted'}`}
                 >
-                  單品結算
-                </button>
-                <button 
-                  onClick={() => setHistoryDetailTab('group')}
-                  className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${historyDetailTab === 'group' ? 'bg-white shadow-sm text-jp-ink' : 'text-jp-muted'}`}
-                >
-                  團體結算
+                  人員結算
                 </button>
                 <button 
                   onClick={() => setHistoryDetailTab('items')}
@@ -1119,58 +1148,43 @@ export default function App() {
                 </button>
               </div>
 
-              {historyDetailTab === 'single' && (
+              {historyDetailTab === 'summary' && (
                 <div className="space-y-4">
-                  <h3 className="text-sm font-bold text-jp-muted uppercase tracking-widest px-2">人員單品獎金總計</h3>
+                  <h3 className="text-sm font-bold text-jp-muted uppercase tracking-widest px-2">人員獎金結算總覽</h3>
                   <div className="glass-card rounded-3xl overflow-hidden">
-                    <table className="w-full text-left text-sm">
-                      <thead>
-                        <tr className="bg-jp-bg">
-                          <th className="p-4 font-bold text-jp-muted">姓名</th>
-                          <th className="p-4 font-bold text-jp-muted text-right">單品獎金</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {historyPeriodSummary.filter(s => s.single > 0).length === 0 ? (
-                          <tr><td colSpan={2} className="p-10 text-center text-jp-muted">此檔期無單品獎金紀錄</td></tr>
-                        ) : (
-                          historyPeriodSummary.filter(s => s.single > 0).map((s) => (
-                            <tr key={`summary-single-${s.id}`} className="border-b border-jp-border/30 last:border-0">
-                              <td className="p-4 font-medium">{s.name}</td>
-                              <td className="p-4 text-right font-bold text-jp-accent">${s.single.toLocaleString()}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {historyDetailTab === 'group' && (
-                <div className="space-y-4">
-                  <h3 className="text-sm font-bold text-jp-muted uppercase tracking-widest px-2">人員團體獎金總計</h3>
-                  <div className="glass-card rounded-3xl overflow-hidden">
-                    <table className="w-full text-left text-sm">
-                      <thead>
-                        <tr className="bg-jp-bg">
-                          <th className="p-4 font-bold text-jp-muted">姓名</th>
-                          <th className="p-4 font-bold text-jp-muted text-right">團體獎金</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {historyPeriodSummary.filter(s => s.group > 0).length === 0 ? (
-                          <tr><td colSpan={2} className="p-10 text-center text-jp-muted">此檔期無團體獎金紀錄</td></tr>
-                        ) : (
-                          historyPeriodSummary.filter(s => s.group > 0).map((s) => (
-                            <tr key={`summary-group-${s.id}`} className="border-b border-jp-border/30 last:border-0">
-                              <td className="p-4 font-medium">{s.name}</td>
-                              <td className="p-4 text-right font-bold text-jp-accent">${s.group.toLocaleString()}</td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm whitespace-nowrap">
+                        <thead>
+                          <tr className="bg-jp-bg">
+                            <th className="p-4 font-bold text-jp-muted">姓名</th>
+                            <th className="p-4 font-bold text-jp-muted text-right">單品</th>
+                            <th className="p-4 font-bold text-jp-muted text-right">團體</th>
+                            <th className="p-4 font-bold text-jp-muted text-right">加總</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historyPeriodSummary.length === 0 ? (
+                            <tr><td colSpan={4} className="p-10 text-center text-jp-muted">此檔期無獎金紀錄</td></tr>
+                          ) : (
+                            historyPeriodSummary.map((s) => (
+                              <tr key={`summary-${s.id}`} className="border-b border-jp-border/30 last:border-0">
+                                <td className="p-4 font-medium">
+                                  <div className="flex items-center gap-2">
+                                    {s.name}
+                                    {s.isSupport && (
+                                      <span className="text-[9px] bg-jp-secondary/10 text-jp-secondary px-1.5 py-0.5 rounded border border-jp-secondary/20">支援</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="p-4 text-right text-jp-muted">${s.single.toLocaleString()}</td>
+                                <td className="p-4 text-right text-jp-muted">${s.group.toLocaleString()}</td>
+                                <td className="p-4 text-right font-bold text-jp-accent">${s.total.toLocaleString()}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1210,7 +1224,7 @@ export default function App() {
                                   console.log("Trash button clicked for single bonus:", p.id);
                                   handleDeletePeriod(p.id);
                                 }}
-                                className="p-3 text-red-500 hover:bg-red-50 rounded-full transition-all cursor-pointer relative z-20"
+                                className="p-3 text-jp-muted hover:bg-jp-bg rounded-full transition-all cursor-pointer relative z-20"
                                 aria-label="刪除單品獎金"
                               >
                                 <Trash2 size={20} className="pointer-events-none" />
@@ -1238,7 +1252,7 @@ export default function App() {
                       {groupedHistory.find(([code]) => code === selectedHistoryPeriodCode)?.[1].group.map(b => (
                         <div key={`group-${b.id}`} className="glass-card p-5 rounded-2xl space-y-4">
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-1 cursor-pointer" onClick={() => handleViewGroupBonus(b.id)}>
                               <div className="flex items-center gap-2">
                                 <h3 className="font-medium">{b.name}</h3>
                                 <button 
@@ -1270,7 +1284,7 @@ export default function App() {
                                 console.log("Trash button clicked for group bonus:", b.id);
                                 handleDeleteGroupBonus(b.id);
                               }}
-                              className="p-3 text-red-500 hover:bg-red-50 rounded-full transition-all cursor-pointer relative z-20"
+                              className="p-3 text-jp-muted hover:bg-jp-bg rounded-full transition-all cursor-pointer relative z-20"
                               aria-label="刪除團體獎金"
                             >
                               <Trash2 size={20} className="pointer-events-none" />
@@ -1295,6 +1309,78 @@ export default function App() {
                   )}
                 </div>
               )}
+            </motion.div>
+          )}
+
+          {view === 'history_group_detail' && (
+            <motion.div 
+              key="history_group_detail"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              {(() => {
+                const bonus = groupBonuses.find(b => b.id === selectedGroupBonusId);
+                if (!bonus) return <div className="text-center py-20 text-jp-muted">找不到資料</div>;
+                
+                return (
+                  <>
+                    <div className="glass-card p-6 rounded-3xl space-y-4">
+                      <div className="flex justify-between items-center">
+                        <h2 className="text-xl font-bold">{bonus.name}</h2>
+                        <button 
+                          onClick={() => handleDownloadGroupReport(bonus)}
+                          className="p-2 text-jp-accent bg-jp-accent/5 rounded-xl hover:bg-jp-accent/10 transition-colors flex items-center gap-2 text-sm"
+                        >
+                          <Download size={16} /> 下載報表
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-jp-bg p-4 rounded-2xl">
+                          <p className="text-[10px] text-jp-muted font-bold uppercase tracking-widest mb-1">總獎金</p>
+                          <p className="text-lg font-display font-bold text-jp-accent">${bonus.total_amount.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-jp-bg p-4 rounded-2xl">
+                          <p className="text-[10px] text-jp-muted font-bold uppercase tracking-widest mb-1">入帳日期</p>
+                          <input 
+                            type="date"
+                            value={bonus.payment_date || ''}
+                            onChange={(e) => handleUpdatePaymentDate('group', bonus.id, e.target.value)}
+                            className="text-sm bg-transparent outline-none w-full"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-bold text-jp-muted uppercase tracking-widest px-2">人員分配明細</h3>
+                      <div className="glass-card rounded-3xl overflow-hidden">
+                        <table className="w-full text-left text-sm">
+                          <thead>
+                            <tr className="bg-jp-bg">
+                              <th className="p-4 font-bold text-jp-muted">姓名</th>
+                              <th className="p-4 font-bold text-jp-muted text-right">銷售數</th>
+                              <th className="p-4 font-bold text-jp-muted text-right">佔比</th>
+                              <th className="p-4 font-bold text-jp-muted text-right">分配金額</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {bonus.details.map((d, idx) => (
+                              <tr key={d.person_id} className="border-b border-jp-border/30 last:border-0">
+                                <td className="p-4 font-medium">{d.person_name}</td>
+                                <td className="p-4 text-right">{d.sales.toLocaleString()}</td>
+                                <td className="p-4 text-right">{(d.share * 100).toFixed(1)}%</td>
+                                <td className="p-4 text-right font-bold text-jp-accent">${d.amount.toLocaleString()}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </motion.div>
           )}
 
